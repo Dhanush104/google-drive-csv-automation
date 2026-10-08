@@ -61,30 +61,34 @@ def find_file(drive, filename, folder_id):
 
 
 def login(token_file):
-
     creds = None
 
-    if os.path.exists(token_file):
-        creds = Credentials.from_authorized_user_file(
-            token_file,
+    if token_file == "source_token.json":
+        token_json = os.environ.get("SOURCE_TOKEN")
+    else:
+        token_json = os.environ.get("DESTINATION_TOKEN")
+
+    if token_json:
+        creds = Credentials.from_authorized_user_info(
+            json.loads(token_json),
             SCOPES
         )
 
     if not creds or not creds.valid:
-
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json",
-                SCOPES
-            )
-
-            creds = flow.run_local_server(port=0)
-
-        with open(token_file, "w") as file:
-            file.write(creds.to_json())
+            if os.path.exists(token_file):
+                creds = Credentials.from_authorized_user_file(
+                    token_file,
+                    SCOPES
+                )
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    "credentials.json",
+                    SCOPES
+                )
+                creds = flow.run_local_server(port=0)
 
     return build("drive", "v3", credentials=creds)
 
