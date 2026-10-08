@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+
+credentials.json
+source_token.json
+destination_token.json
+processed.json
