@@ -172,8 +172,14 @@ def save_processed(data):
         json.dump(data, file, indent=4)
 
 
-source_url = input("Enter Source Folder URL: ")
-destination_url = input("Enter Destination Folder URL: ")
+source_url = os.environ.get("SOURCE_FOLDER_URL")
+destination_url = os.environ.get("DESTINATION_FOLDER_URL")
+
+if not source_url:
+    source_url = input("Enter Source Folder URL: ")
+
+if not destination_url:
+    destination_url = input("Enter Destination Folder URL: ")
 
 source_id = get_folder_id(source_url)
 destination_id = get_folder_id(destination_url)
