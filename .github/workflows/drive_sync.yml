@@ -2,6 +2,16 @@ name: Google Drive CSV Automation
 
 on:
   workflow_dispatch:
+    inputs:
+      source_folder_url:
+        description: "Google Drive source folder URL"
+        required: true
+        type: string
+
+      destination_folder_url:
+        description: "Google Drive destination folder URL"
+        required: true
+        type: string
 
 jobs:
   run-automation:
@@ -11,6 +21,8 @@ jobs:
       GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
       SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
       DESTINATION_TOKEN: ${{ secrets.DESTINATION_TOKEN }}
+      SOURCE_FOLDER_URL: ${{ inputs.source_folder_url }}
+      DESTINATION_FOLDER_URL: ${{ inputs.destination_folder_url }}
 
     steps:
       - name: Checkout repository
@@ -24,3 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+      - name: Run Google Drive automation
+        run: |
+          python drive_functions.py
+      
