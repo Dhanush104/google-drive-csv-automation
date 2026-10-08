@@ -1,1041 +1,483 @@
-# Google Drive CSV Automation
+# 🚀 Google Drive CSV Automation
 
-Automate the processing of CSV files stored in Google Drive using the **Google Drive API**, **Python**, and **GitHub Actions**.
-
-The automation reads CSV files from a source Google Drive folder, processes each row, and creates or updates a separate CSV file for each `Product id` in a destination Google Drive folder.
+> **Automated, cloud-ready Python pipeline for splitting and synchronizing Google Drive CSV files by Product ID using Google Drive API v3, Pandas, and GitHub Actions.**
 
 ---
 
-## 1. Project Overview
+## 📌 Table of Contents
+1. [Project Overview](#-project-overview)
+2. [How It Works](#-how-it-works)
+3. [Architecture & Workflow Diagrams](#-architecture--workflow-diagrams)
+4. [Input and Output Specifications](#-input-and-output-specifications)
+5. [Prerequisites](#-prerequisites)
+6. [Step-by-Step Replication & Setup Guide](#-step-by-step-replication--setup-guide)
+   - [Step 1: Google Cloud Project & API Setup](#step-1-google-cloud-project--api-setup)
+   - [Step 2: Local Environment Setup](#step-2-local-environment-setup)
+   - [Step 3: Generate OAuth Tokens Locally](#step-3-generate-oauth-tokens-locally)
+   - [Step 4: Run Automation Locally](#step-4-run-automation-locally)
+   - [Step 5: GitHub Actions Setup & Repository Secrets](#step-5-github-actions-setup--repository-secrets)
+   - [Step 6: Execute via GitHub Actions](#step-6-execute-via-github-actions)
+7. [Repository File Structure](#-repository-file-structure)
+8. [Codebase Technical Explanation](#-codebase-technical-explanation)
+9. [Security & Credentials Handling](#-security--credentials-handling)
+10. [Troubleshooting Guide](#-troubleshooting-guide)
+11. [Current Limitations & Roadmap](#-current-limitations--roadmap)
+12. [License & Maintenance](#-license--maintenance)
 
-This project was created to automate a repetitive Google Drive data-processing workflow.
+---
 
-### Problem
+## 📖 Project Overview
 
-Suppose a source Google Drive folder contains a CSV file like:
+This project automates the processing and splitting of multi-product CSV files stored in Google Drive. 
 
-```csv
-Product id,Product name,length,breadth,height
-101,RFID,21,35,42
-102,core,33,56,22
-103,ibmd,25,82,91
+### The Problem
+In inventory, e-commerce, or manufacturing workflows, source files containing data for hundreds of products are frequently uploaded as a single consolidated CSV file to Google Drive. Manually opening these files, filtering by `Product id`, and creating or updating separate individual CSV files for each product in a destination folder is tedious, error-prone, and unsustainable.
+
+### The Automated Solution
+With **Google Drive CSV Automation**:
+- The automation connects to a designated **Source Google Drive Folder**.
+- It identifies and downloads all `.csv` files inside the folder.
+- It parses each row using **Pandas**.
+- For every row, it extracts the `Product id` and either **creates** a new individual `<Product id>.csv` or **updates** the existing file in the **Destination Google Drive Folder**.
+- It uses **version tracking** (`processed.json` / Google Drive File `version` metadata) to skip unchanged files and save execution bandwidth.
+- It runs seamlessly both **locally** and in the cloud via **GitHub Actions** without requiring your local machine to stay turned on.
+
+---
+
+## ⚙️ How It Works
+
+```text
++-----------------------+      +------------------------+      +-----------------------------+
+| Source Google Drive    | ---> | Python Automation     | ---> | Destination Google Drive    |
+| (Consolidated CSVs)   |      | (Pandas & Drive API)   |      | (Split <Product id>.csv)    |
++-----------------------+      +------------------------+      +-----------------------------+
 ```
 
-Manually creating individual CSV files for every product is repetitive.
-
-### Solution
-
-The Python automation:
-
-1. Connects to the source Google Drive account.
-2. Reads CSV files from the selected source folder.
-3. Processes each CSV row.
-4. Uses `Product id` as the output filename.
-5. Creates or updates the corresponding CSV in the destination folder.
-6. Runs from GitHub Actions without requiring the user's computer to stay online.
+1. **Dual Account Support**: Supports using separate Google Drive accounts for Source and Destination drives (or the same account for both).
+2. **Version Tracking**: Avoids re-processing files that have not changed since the last execution.
+3. **Upsert Logic**: Automatically checks if `<Product id>.csv` already exists in the destination folder. If it exists, the file content is updated; if not, a new CSV file is created.
+4. **Cloud & Local Parity**: Executes locally via CLI prompts or headlessly via GitHub Actions secrets and workflow parameters.
 
 ---
 
-## 2. Key Features
+## 📐 Architecture & Workflow Diagrams
 
-- Google Drive API integration
-- Separate source and destination Google accounts
-- OAuth authentication
-- CSV processing with Pandas
-- One output CSV per product
-- Create-or-update behavior for output files
-- Source file version tracking
-- `processed.json` state tracking for local execution
-- Manual GitHub Actions execution
-- Source and destination folder URLs supplied at workflow runtime
-- Credentials stored securely in GitHub Secrets
-- Local execution support
-- No Google Drive for Desktop required
-- No AWS Lambda required
-
----
-
-## 3. High-Level Architecture
+### High-Level System Architecture
 
 ```mermaid
 flowchart LR
-    U[User] -->|Manual Run| GA[GitHub Actions]
+    subgraph Trigger
+        U[User] -->|Run Workflow| GA[GitHub Actions]
+        U -->|CLI Command| LOCAL[Local Machine]
+    end
 
-    GA --> PY[Python Automation]
+    subgraph Authentication
+        GA -->|Load Secrets| ENV[Environment Variables]
+        LOCAL -->|Load JSON| FILES[Local Credentials & Tokens]
+    end
 
-    PY -->|Google Drive API| S[Source Google Drive]
-    PY -->|Google Drive API| D[Destination Google Drive]
+    subgraph Core Engine
+        ENV --> PY[drive_functions.py]
+        FILES --> PY
+        PY --> PANDAS[Pandas Processing Engine]
+    end
 
-    S --> CSV[Source CSV Files]
-    CSV --> READ[Read CSV with Pandas]
-    READ --> SPLIT[Split Rows by Product ID]
-
-    SPLIT --> CREATE[Create / Update Individual CSVs]
-    CREATE --> D
+    subgraph Google Drive Cloud
+        PY -->|Drive API v3 Read| SRC[Source Drive Folder]
+        PANDAS -->|Upsert <Product id>.csv| DST[Destination Drive Folder]
+    end
 ```
 
----
-
-## 4. Complete Workflow
-
-```mermaid
-flowchart TB
-    A[User opens GitHub Actions] --> B[Run workflow]
-    B --> C[Enter Source Folder URL]
-    C --> D[Enter Destination Folder URL]
-
-    D --> E[GitHub Actions Runner]
-
-    E --> F[Checkout Repository]
-    F --> G[Install Python 3.11]
-    G --> H[Install Dependencies]
-
-    H --> I[Load GitHub Secrets]
-    I --> J[Authenticate Source Account]
-    I --> K[Authenticate Destination Account]
-
-    J --> L[Get Source Folder ID]
-    L --> M[Find CSV Files]
-
-    M --> N{CSV Files Found?}
-
-    N -->|No| O[Finish Without Processing]
-    N -->|Yes| P[Download CSV]
-
-    P --> Q[Read CSV with Pandas]
-    Q --> R[Process Each Row]
-    R --> S[Read Product ID]
-    S --> T[Generate Product ID.csv]
-
-    T --> U{File Exists?}
-    U -->|No| V[Create File]
-    U -->|Yes| W[Update File]
-
-    V --> X[Destination Google Drive]
-    W --> X
-
-    X --> Y[Workflow Complete]
-```
-
----
-
-## 5. Input and Output
-
-### Input
-
-A CSV file stored directly inside the selected source Google Drive folder.
-
-Example:
-
-```csv
-Product id,Product name,length,breadth,height
-101,RFID,21,35,42
-102,core,33,56,22
-103,ibmd,25,82,91
-```
-
-### Output
-
-The automation creates:
-
-```text
-101.csv
-102.csv
-103.csv
-```
-
-### `101.csv`
-
-```csv
-Product id,Product name,length,breadth,height
-101,RFID,21,35,42
-```
-
-### `102.csv`
-
-```csv
-Product id,Product name,length,breadth,height
-102,core,33,56,22
-```
-
-### `103.csv`
-
-```csv
-Product id,Product name,length,breadth,height
-103,ibmd,25,82,91
-```
-
----
-
-## 6. Processing Logic
+### Complete Execution Flowchart
 
 ```mermaid
 flowchart TD
-    A[Source CSV] --> B[Load CSV]
-    B --> C[Read Rows]
-    C --> D{Next Row?}
+    A[Start Automation] --> B{Environment check: CLI or GitHub Actions?}
+    B -->|GitHub Actions| C[Fetch URLs from Workflow Inputs & Tokens from Secrets]
+    B -->|Local CLI| D[Prompt User for Source & Destination Folder URLs]
 
-    D -->|Yes| E[Read Product ID]
-    E --> F[Generate Filename]
-    F --> G[Check Destination Folder]
+    C --> E[Extract Folder IDs from URLs]
+    D --> E
 
-    G --> H{File Exists?}
+    E --> F[Authenticate Source & Destination Drive API Clients]
+    F --> G[Fetch List of .csv Files in Source Folder]
 
-    H -->|No| I[Create CSV]
-    H -->|Yes| J[Update Existing CSV]
+    G --> H{Are there CSV files?}
+    H -->|No| I[Log 'Finished!' & Exit]
+    H -->|Yes| J[Loop Through Each CSV File]
 
-    I --> D
-    J --> D
+    J --> K{Check Drive Version vs processed.json}
+    K -->|Unchanged| L[Log 'Skipped: File - no changes'] --> J
+    K -->|Changed or New| M[Download CSV Data into BytesIO Buffer]
 
-    D -->|No| K[Processing Complete]
-```
+    M --> N[Load Buffer into Pandas DataFrame]
+    N --> O[Iterate Over DataFrame Rows]
 
-The output filename is generated using:
+    O --> P[Extract 'Product id' Column]
+    P --> Q[Check if <Product id>.csv Exists in Destination Folder]
 
-```text
-<Product id>.csv
-```
+    Q -->|File Exists| R[Update Existing File in Destination Folder via API]
+    Q -->|File Does Not Exist| S[Create New <Product id>.csv in Destination Folder via API]
 
-For example:
-
-```text
-101 → 101.csv
-102 → 102.csv
-103 → 103.csv
+    R --> T[Update processed.json State]
+    S --> T
+    T --> J
 ```
 
 ---
 
-## 7. Project Structure
+## 📊 Input and Output Specifications
+
+### Input File Format
+Source files must be standard `.csv` files stored in your Source Google Drive folder containing a column named **`Product id`**.
+
+**Example (`source_inventory.csv`):**
+```csv
+Product id,Product name,length,breadth,height
+101,RFID Reader,21,35,42
+102,Core Controller,33,56,22
+103,iBMD Sensor,25,82,91
+```
+
+### Output File Structure
+The automation creates or updates individual CSV files in your Destination Google Drive folder named `<Product id>.csv`.
+
+**Generated Destination Files:**
+```text
+Destination Folder/
+├── 101.csv
+├── 102.csv
+└── 103.csv
+```
+
+**`101.csv` Contents:**
+```csv
+Product id,Product name,length,breadth,height
+101,RFID Reader,21,35,42
+```
+
+**`102.csv` Contents:**
+```csv
+Product id,Product name,length,breadth,height
+102,Core Controller,33,56,22
+```
+
+**`103.csv` Contents:**
+```csv
+Product id,Product name,length,breadth,height
+103,iBMD Sensor,25,82,91
+```
+
+---
+
+## 📋 Prerequisites
+
+Before starting, ensure you have:
+1. **Python 3.11 or higher** installed on your system.
+2. **Git** installed on your machine.
+3. A **Google Account** (or two separate Google Accounts for source & destination).
+4. Access to **Google Cloud Console** to create OAuth credentials.
+5. A **GitHub Account** (if deploying the automated cloud workflow).
+
+---
+
+## 🚀 Step-by-Step Replication & Setup Guide
+
+Follow these exact steps to replicate and run this project from start to finish.
+
+---
+
+### Step 1: Google Cloud Project & API Setup
+
+To interact with Google Drive programmatically, you must create Google OAuth 2.0 credentials.
+
+1. **Go to Google Cloud Console**:
+   Visit [console.cloud.google.com](https://console.cloud.google.com/) and sign in with your Google account.
+
+2. **Create a New Project**:
+   - Click the project dropdown at the top navigation bar.
+   - Click **New Project**.
+   - Enter a Project Name (e.g., `Google-Drive-CSV-Sync`) and click **Create**.
+
+3. **Enable Google Drive API**:
+   - Navigate to **APIs & Services** > **Library**.
+   - Search for `Google Drive API`.
+   - Select it and click **Enable**.
+
+4. **Configure OAuth Consent Screen**:
+   - Go to **APIs & Services** > **OAuth consent screen**.
+   - Select **External** (or **Internal** if using Google Workspace) and click **Create**.
+   - Fill in mandatory fields: App Name (e.g. `Drive CSV Sync`), User Support Email, Developer Contact Email.
+   - Click **Save and Continue**.
+   - Under **Scopes**, click **Add or Remove Scopes**, search for `.../auth/drive`, select `https://www.googleapis.com/auth/drive`, and click **Update**.
+   - Under **Test Users**, add the Google email addresses of your **Source** and **Destination** Google accounts.
+   - Click **Save and Continue**.
+
+5. **Create OAuth Client ID Credentials**:
+   - Go to **APIs & Services** > **Credentials**.
+   - Click **+ Create Credentials** > **OAuth client ID**.
+   - Select **Application type**: `Desktop app`.
+   - Set Name: `Drive Automation Client`.
+   - Click **Create**.
+   - Click **Download JSON** in the popup modal.
+   - Save the downloaded file as **`credentials.json`** in your root project folder.
+
+> [!IMPORTANT]
+> Keep `credentials.json` secure! Never commit `credentials.json` to public Git repositories.
+
+---
+
+### Step 2: Local Environment Setup
+
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/Dhanush104/google-drive-csv-automation.git
+   cd google-drive-csv-automation
+   ```
+
+2. **Create and Activate Virtual Environment (Optional but Recommended)**:
+   - **Windows (PowerShell)**:
+     ```powershell
+     python -m venv venv
+     .\venv\Scripts\Activate.ps1
+     ```
+   - **Linux / macOS**:
+     ```bash
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
+
+3. **Install Required Python Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   The required packages include:
+   - `pandas` — for parsing and writing CSV data.
+   - `google-api-python-client` — official Google API Python SDK.
+   - `google-auth-httplib2` & `google-auth-oauthlib` — OAuth 2.0 helper libraries.
+
+---
+
+### Step 3: Generate OAuth Tokens Locally
+
+Because the pipeline authenticates headlessly in GitHub Actions, you must generate local authorization tokens (`source_token.json` and `destination_token.json`) first via browser login.
+
+1. **Ensure `credentials.json` is in the project root directory**.
+2. **Run the Python script locally**:
+   ```bash
+   python drive_functions.py
+   ```
+
+3. **Authorize Source Google Account**:
+   - The script will launch your web browser asking you to log into the **Source Google Account** (the account owning the input CSV folder).
+   - Click **Allow** to grant Google Drive permissions.
+   - Once completed, a `source_token.json` file will be generated in your project directory.
+
+4. **Authorize Destination Google Account**:
+   - Next, the script will open another browser tab requesting login for the **Destination Google Account** (the account owning the output folder).
+   - Log into the destination account and click **Allow**.
+   - Once completed, a `destination_token.json` file will be generated in your project directory.
+
+> [!NOTE]
+> If you are using the same Google account for both source and destination folders, authenticate with that single account during both prompt flows.
+
+---
+
+### Step 4: Run Automation Locally
+
+When executing locally, the script asks for Google Drive folder URLs if environment variables are not set:
+
+1. Obtain your Drive folder URLs from your browser address bar:
+   - **Source Folder URL Example**: `https://drive.google.com/drive/u/0/folders/1A2b3C4d5E6f7G8h9I0j`
+   - **Destination Folder URL Example**: `https://drive.google.com/drive/u/1/folders/9Z8y7X6w5V4u3T2s1R0q`
+
+2. Run the script:
+   ```bash
+   python drive_functions.py
+   ```
+
+3. Enter the requested inputs:
+   ```text
+   Enter Source Folder URL: https://drive.google.com/drive/u/0/folders/YOUR_SOURCE_FOLDER_ID
+   Enter Destination Folder URL: https://drive.google.com/drive/u/1/folders/YOUR_DESTINATION_FOLDER_ID
+   ```
+
+4. **Observe Output**:
+   ```text
+   Processing: inventory_batch_1.csv
+   Created: 101.csv
+   Created: 102.csv
+   Created: 103.csv
+   Finished!
+   ```
+
+5. **Second Run Test (Version Checking)**:
+   Run `python drive_functions.py` again without modifying the source CSV file. You will see:
+   ```text
+   Skipped: inventory_batch_1.csv - no changes
+   Finished!
+   ```
+
+---
+
+### Step 5: GitHub Actions Setup & Repository Secrets
+
+To run the automation on GitHub Actions without needing your local computer online:
+
+1. **Push your code to GitHub** (Ensure `credentials.json` and `*_token.json` are listed in `.gitignore` and **NOT** pushed).
+2. Open your repository on GitHub.
+3. Go to **Settings** > **Secrets and variables** > **Actions**.
+4. Click **New repository secret** and add the following 3 secrets:
+
+| Secret Name | Source Content | Description |
+|-------------|----------------|-------------|
+| `GOOGLE_CREDENTIALS` | Contents of `credentials.json` | OAuth Client ID credentials JSON |
+| `SOURCE_TOKEN` | Contents of `source_token.json` | Authorized OAuth token for source Drive |
+| `DESTINATION_TOKEN` | Contents of `destination_token.json` | Authorized OAuth token for destination Drive |
+
+> [!TIP]
+> Open `credentials.json`, `source_token.json`, and `destination_token.json` in a text editor, copy the entire raw JSON text, and paste it into the respective secret field.
+
+---
+
+### Step 6: Execute via GitHub Actions
+
+1. Go to the **Actions** tab in your GitHub repository.
+2. Under **Workflows** on the left, click **Google Drive CSV Automation**.
+3. Click the **Run workflow** dropdown on the right side.
+4. Input your folder URLs:
+   - **Google Drive source folder URL**: Paste full source folder URL.
+   - **Google Drive destination folder URL**: Paste full destination folder URL.
+5. Click **Run workflow**.
+
+```text
+GitHub Actions UI:
+┌────────────────────────────────────────────────────────┐
+│ Run workflow                                           │
+│                                                        │
+│ Google Drive source folder URL                         │
+│ [ https://drive.google.com/drive/u/0/folders/xxxx... ] │
+│                                                        │
+│ Google Drive destination folder URL                    │
+│ [ https://drive.google.com/drive/u/1/folders/yyyy... ] │
+│                                                        │
+│ [ Run workflow ]                                       │
+└────────────────────────────────────────────────────────┘
+```
+
+6. Click on the running job to monitor logs in real-time.
+
+---
+
+## 📁 Repository File Structure
 
 ```text
 google-drive-csv-automation/
 │
-├── drive_functions.py
-├── requirements.txt
-├── .gitignore
-├── README.md
+├── .github/
+│   └── workflows/
+│       └── drive_sync.yml        # GitHub Actions workflow file
 │
-└── .github/
-    └── workflows/
-        └── drive_sync.yml
+├── drive_functions.py            # Core Python automation script
+├── requirements.txt              # Required Python packages
+├── .gitignore                    # Prevents secret credentials leakage
+└── README.md                     # Project documentation
 ```
 
-### Local-only files
-
-The following files are intentionally **not committed to GitHub**:
-
+### Local Runtime Files (Ignored by Git)
 ```text
-credentials.json
-source_token.json
-destination_token.json
-processed.json
-```
-
-They are protected by `.gitignore`.
-
----
-
-## 8. Technologies Used
-
-| Technology | Purpose |
-|---|---|
-| Python | Automation logic |
-| Pandas | CSV processing |
-| Google Drive API | Reading and writing Drive files |
-| Google OAuth 2.0 | Google account authentication |
-| Git | Version control |
-| GitHub | Source code repository |
-| GitHub Actions | Cloud execution |
-| YAML | Workflow configuration |
-| Mermaid | Documentation diagrams |
-
----
-
-# 9. Prerequisites
-
-Before using the project, install or configure:
-
-- Python 3.11+
-- Git
-- A Google account with access to the source folder
-- A Google account with access to the destination folder
-- Google Cloud project
-- Google Drive API enabled
-- OAuth 2.0 Desktop application credentials
-- GitHub repository
-
----
-
-# 10. Google Drive API Setup
-
-## Step 1 — Create a Google Cloud Project
-
-Open Google Cloud Console and create a project.
-
-## Step 2 — Enable Google Drive API
-
-Enable:
-
-```text
-Google Drive API
-```
-
-for the project.
-
-## Step 3 — Configure OAuth Consent
-
-Configure the OAuth consent screen for the application.
-
-## Step 4 — Create OAuth Credentials
-
-Create an OAuth Client ID using the:
-
-```text
-Desktop application
-```
-
-application type.
-
-Download the credentials JSON file.
-
-Rename it to:
-
-```text
-credentials.json
-```
-
-Place it in the local project directory.
-
-> Do not upload `credentials.json` to GitHub.
-
----
-
-# 11. Two Google Drive Accounts
-
-This project uses two Drive identities:
-
-```mermaid
-flowchart LR
-    A[Source Google Account] --> B[Source Drive Folder]
-    C[Destination Google Account] --> D[Destination Drive Folder]
-
-    B --> E[Python Automation]
-    E --> D
-```
-
-### Source account
-
-Used to:
-
-- Read source folders
-- Find CSV files
-- Download CSV data
-
-### Destination account
-
-Used to:
-
-- Find existing output CSVs
-- Create new output CSVs
-- Update existing output CSVs
-
-Each account has its own OAuth token.
-
-Local token files:
-
-```text
-source_token.json
-destination_token.json
+├── credentials.json              # Downloaded Google OAuth Desktop Client credentials
+├── source_token.json             # Generated OAuth token for Source Account
+├── destination_token.json        # Generated OAuth token for Destination Account
+└── processed.json                # Local state file for tracking processed file versions
 ```
 
 ---
 
-# 12. Local Authentication
+## 🔍 Codebase Technical Explanation
 
-When the project is first run locally, Google OAuth authentication creates token files.
+### Key Functions in `drive_functions.py`
 
-The tokens allow the application to reuse the authorized Google account without requiring authentication every time.
-
-Expected local files:
-
-```text
-credentials.json
-source_token.json
-destination_token.json
+#### 1. `get_folder_id(url)`
+Extracts the unique Google Drive folder ID string from full web browser URLs using string parsing.
+```python
+def get_folder_id(url):
+    return url.split("/folders/")[1].split("?")[0]
 ```
 
-These files must remain private.
+#### 2. `login(token_file)`
+Handles dual-mode authentication. In GitHub Actions, it parses environment variables (`SOURCE_TOKEN` / `DESTINATION_TOKEN`). In local mode, it handles token refresh or opens local OAuth flows using `credentials.json`.
+```python
+def login(token_file):
+    ...
+```
+
+#### 3. `get_csv_files(drive, folder_id)`
+Executes paginated Drive API `files().list()` queries to retrieve all non-trashed `.csv` files inside the target folder, fetching `id, name, mimeType, version`.
+
+#### 4. `find_file(drive, filename, folder_id)`
+Searches destination folder for pre-existing output files (e.g. `101.csv`) to determine whether to perform an `update` or `create` API call.
+
+#### 5. `download_csv(drive, file_id)` & `upload_csv(drive, row, filename, folder_id)`
+- `download_csv`: Downloads Drive file bytes directly into an in-memory `io.BytesIO` buffer and parses it with `pd.read_csv()`.
+- `upload_csv`: Converts a single row DataFrame into CSV byte streams (`MediaIoBaseUpload`) and uploads it to Google Drive using `files().create()` or `files().update()`.
 
 ---
 
-# 13. Local Installation
+## 🔒 Security & Credentials Handling
 
-Clone the repository:
+To prevent unauthorized access to your Google Drive data:
 
-```bash
-git clone https://github.com/Dhanush104/google-drive-csv-automation.git
-```
-
-Move into the project:
-
-```bash
-cd google-drive-csv-automation
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
+- **`.gitignore` Rules**: Always verify sensitive files are ignored before committing:
+  ```gitignore
+  __pycache__/
+  *.pyc
+  credentials.json
+  source_token.json
+  destination_token.json
+  processed.json
+  ```
+- **Environment Variables**: In production (GitHub Actions), tokens and credentials are standard JSON strings injected via encrypted repository secrets.
+- **Minimal OAuth Scope**: The project uses `https://www.googleapis.com/auth/drive`. If limited scope is desired, scope down according to organizational requirements.
 
 ---
 
-# 14. Requirements
+## 🛠️ Troubleshooting Guide
 
-The project uses:
+### 1. `Finished!` with No Output Files Created
+- **Cause**: No `.csv` files found directly inside the source folder, or files are in a subfolder.
+- **Fix**: Verify source CSV file has extension `.csv`, is uploaded as plain text CSV (not Google Sheet format), and is located directly in the root of the source folder.
 
-```text
-pandas
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-```
+### 2. `google.auth.exceptions.RefreshError` or Token Expired
+- **Cause**: OAuth token has expired or consent screen test user permissions changed.
+- **Fix**: Delete local `source_token.json` and `destination_token.json`, rerun `python drive_functions.py` locally to re-authenticate, and update GitHub Secrets with new token contents.
 
-Install them with:
+### 3. KeyError: `'Product id'`
+- **Cause**: Input CSV file header does not match expected column name.
+- **Fix**: Ensure your CSV file has a column header named exact string `Product id` (case sensitive).
 
-```bash
-pip install -r requirements.txt
-```
-
----
-
-# 15. Run Locally
-
-Run:
-
-```bash
-python drive_functions.py
-```
-
-The script asks for:
-
-```text
-Enter Source Folder URL:
-Enter Destination Folder URL:
-```
-
-Provide the Google Drive folder URLs.
-
-Example:
-
-```text
-Source:
-https://drive.google.com/drive/u/0/folders/SOURCE_FOLDER_ID
-
-Destination:
-https://drive.google.com/drive/u/1/folders/DESTINATION_FOLDER_ID
-```
-
-The application extracts the folder IDs from these URLs.
+### 4. GitHub Actions Secret Error / Invalid JSON
+- **Cause**: Secret value pasted into GitHub Secrets had missing quotes or formatting issues.
+- **Fix**: Copy raw JSON file contents entirely without modifying or truncating any lines.
 
 ---
 
-# 16. GitHub Actions
+## 🛣️ Current Limitations & Roadmap
 
-The project can run without keeping the local computer online.
+### Current Limitations
+- **Folder Traversal**: Processes files directly inside the given folder; does not recursively scan subfolders.
+- **Ephemeral Runner State**: In GitHub Actions, `processed.json` is recreated per run unless persistent state storage (e.g., S3 / Drive / DB) is configured.
 
-```mermaid
-flowchart LR
-    A[GitHub Repository] --> B[GitHub Actions]
-    B --> C[Ubuntu Runner]
-    C --> D[Python 3.11]
-    D --> E[Google Drive API]
-    E --> F[Source Drive]
-    E --> G[Destination Drive]
-```
-
-The current workflow is:
-
-```text
-Manual trigger
-      ↓
-GitHub Actions
-      ↓
-Checkout repository
-      ↓
-Set up Python
-      ↓
-Install dependencies
-      ↓
-Load secrets
-      ↓
-Run Python automation
-      ↓
-Google Drive
-```
+### Feature Roadmap
+- [ ] Add Cron schedule support in GitHub Actions (`schedule` trigger).
+- [ ] Persist `processed.json` state to a Google Drive file or cloud database.
+- [ ] Add recursive subfolder processing capability.
+- [ ] Add Slack / Email webhook notifications on sync completion or failures.
+- [ ] Add input schema validation for custom column mappings.
 
 ---
 
-# 17. GitHub Repository Secrets
+## 📄 License & Maintenance
 
-The project does not commit Google credentials to GitHub.
-
-The following repository secrets are required:
-
-```text
-GOOGLE_CREDENTIALS
-SOURCE_TOKEN
-DESTINATION_TOKEN
-```
-
-### `GOOGLE_CREDENTIALS`
-
-Contains the complete contents of:
-
-```text
-credentials.json
-```
-
-### `SOURCE_TOKEN`
-
-Contains the complete contents of:
-
-```text
-source_token.json
-```
-
-### `DESTINATION_TOKEN`
-
-Contains the complete contents of:
-
-```text
-destination_token.json
-```
-
-Never expose these values in source code, README files, screenshots, issues, or logs.
-
----
-
-# 18. GitHub Actions Workflow Inputs
-
-The workflow accepts two inputs:
-
-```text
-source_folder_url
-destination_folder_url
-```
-
-This allows the user to select different source and destination folders every time the workflow is manually executed.
-
-Example:
-
-```text
-Source Folder URL:
-https://drive.google.com/drive/u/0/folders/xxxxxxxx
-
-Destination Folder URL:
-https://drive.google.com/drive/u/1/folders/yyyyyyyy
-```
-
----
-
-# 19. Running the Workflow
-
-Go to:
-
-```text
-GitHub Repository
-    ↓
-Actions
-    ↓
-Google Drive CSV Automation
-    ↓
-Run workflow
-```
-
-Enter:
-
-```text
-Source folder URL
-Destination folder URL
-```
-
-Then click:
-
-```text
-Run workflow
-```
-
----
-
-# 20. GitHub Actions Workflow File
-
-The workflow is stored at:
-
-```text
-.github/workflows/drive_sync.yml
-```
-
-Current workflow:
-
-```yaml
-name: Google Drive CSV Automation
-
-on:
-  workflow_dispatch:
-    inputs:
-      source_folder_url:
-        description: "Google Drive source folder URL"
-        required: true
-        type: string
-
-      destination_folder_url:
-        description: "Google Drive destination folder URL"
-        required: true
-        type: string
-
-jobs:
-  run-automation:
-    runs-on: ubuntu-latest
-
-    env:
-      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-      SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
-      DESTINATION_TOKEN: ${{ secrets.DESTINATION_TOKEN }}
-      SOURCE_FOLDER_URL: ${{ inputs.source_folder_url }}
-      DESTINATION_FOLDER_URL: ${{ inputs.destination_folder_url }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run Google Drive automation
-        run: |
-          python drive_functions.py
-```
-
----
-
-# 21. Source Folder Requirement
-
-The current implementation searches for CSV files **directly inside the selected source folder**.
-
-Example:
-
-```text
-Source Folder
-│
-├── products.csv       ← detected
-├── inventory.csv      ← detected
-│
-└── Subfolder
-    └── data.csv       ← not detected
-```
-
-The current implementation does not recursively search subfolders.
-
----
-
-# 22. Create vs Update Behavior
-
-Before creating an output file, the application checks whether the file already exists in the destination folder.
-
-```mermaid
-flowchart TD
-    A[Generate Product ID.csv] --> B[Search Destination]
-    B --> C{File Exists?}
-
-    C -->|No| D[Create New CSV]
-    C -->|Yes| E[Update Existing CSV]
-
-    D --> F[Destination Drive]
-    E --> F
-```
-
-This prevents unnecessary duplicate files.
-
----
-
-# 23. Change Detection
-
-The application also tracks the Google Drive file version.
-
-Conceptually:
-
-```text
-Source File
-     ↓
-Get Drive File Version
-     ↓
-Compare With Previous Version
-     ↓
-Changed?
- ┌───────┴───────┐
- No              Yes
- ↓                ↓
-Skip            Process
-```
-
-For local execution, the processed state is stored in:
-
-```text
-processed.json
-```
-
-Example:
-
-```json
-{
-    "google-drive-file-id": "123"
-}
-```
-
-This helps avoid processing unchanged source files.
-
-> Note: GitHub Actions runners are temporary environments. Because `processed.json` is intentionally not committed to the repository, persistent change tracking across separate GitHub Actions runs should be improved in a future version.
-
----
-
-# 24. Security
-
-Sensitive files are excluded through `.gitignore`.
-
-Current protected files:
-
-```gitignore
-__pycache__/
-*.pyc
-
-credentials.json
-source_token.json
-destination_token.json
-processed.json
-```
-
-### Never commit:
-
-```text
-credentials.json
-source_token.json
-destination_token.json
-```
-
-### Recommended security practices
-
-- Use GitHub Secrets for credentials.
-- Never print token contents.
-- Never hard-code OAuth client secrets.
-- Keep the repository private when appropriate.
-- Give Google accounts only the required Drive access.
-- Rotate credentials if they are accidentally exposed.
-
----
-
-# 25. Troubleshooting
-
-## Workflow succeeds but no output files appear
-
-Check the GitHub Actions log for:
-
-```text
-Processing:
-Created:
-Updated:
-Skipped:
-```
-
-If the log only shows:
-
-```text
-Finished!
-```
-
-then the source folder likely returned zero CSV files.
-
-Check:
-
-1. The source folder URL is correct.
-2. A CSV exists directly inside the source folder.
-3. The source Google account has access to the folder.
-4. The file has a `.csv` extension.
-5. The CSV is not inside a subfolder.
-
----
-
-## Authentication error
-
-Check:
-
-```text
-GOOGLE_CREDENTIALS
-SOURCE_TOKEN
-DESTINATION_TOKEN
-```
-
-in:
-
-```text
-GitHub
-→ Settings
-→ Secrets and variables
-→ Actions
-```
-
-Do not paste credentials into the Python source code.
-
----
-
-## Local authentication works but GitHub fails
-
-Check that the GitHub Secrets contain the complete JSON contents of the corresponding local files.
-
-Required mapping:
-
-```text
-credentials.json
-      ↓
-GOOGLE_CREDENTIALS
-
-source_token.json
-      ↓
-SOURCE_TOKEN
-
-destination_token.json
-      ↓
-DESTINATION_TOKEN
-```
-
----
-
-## Output files are duplicated
-
-The application searches the destination folder before creating a file.
-
-If duplicates still occur, verify that:
-
-- The destination folder URL is correct.
-- The `Product id` values are unique.
-- The destination account has permission to see existing files.
-
----
-
-# 26. Current Limitations
-
-The current implementation has several limitations:
-
-- Source search is not recursive.
-- GitHub Actions currently runs manually.
-- Persistent `processed.json` state is not maintained between ephemeral GitHub runners.
-- The workflow does not currently run on a schedule.
-- There is no email/Slack notification system.
-- CSV validation can be improved.
-- Error handling and retry logic can be expanded.
-- Duplicate `Product id` handling can be improved.
-- Large CSV processing can be optimized further.
-
----
-
-# 27. Future Improvements
-
-Possible next versions:
-
-```mermaid
-flowchart TB
-    A[Current System] --> B[Scheduled Automation]
-    A --> C[Persistent Processing State]
-    A --> D[Recursive Folder Processing]
-    A --> E[Better Error Handling]
-    A --> F[Notifications]
-
-    B --> G[Automatic Daily / Hourly Run]
-    C --> H[Persistent State in Drive / Database]
-    D --> I[Process Nested Folders]
-    E --> J[Retry Failed API Calls]
-    F --> K[Email / Slack Notification]
-```
-
-Potential improvements include:
-
-### 1. Scheduled execution
-
-Add a GitHub Actions cron trigger.
-
-### 2. Persistent state
-
-Move processing state from the temporary runner to a persistent location such as:
-
-- Google Drive
-- Database
-- GitHub-managed state
-
-### 3. Recursive processing
-
-Allow the automation to process CSV files inside nested folders.
-
-### 4. Validation
-
-Validate:
-
-- Required columns
-- Empty `Product id`
-- Duplicate product IDs
-- Invalid CSV files
-
-### 5. Logging
-
-Generate structured logs containing:
-
-```text
-Source file
-Rows processed
-Files created
-Files updated
-Files skipped
-Errors
-Execution time
-```
-
-### 6. Notifications
-
-Send a notification when:
-
-- Processing succeeds
-- Processing fails
-- Files are created
-- Files are skipped
-- Authentication fails
-
----
-
-# 28. Example End-to-End Execution
-
-```text
-User
- │
- │ Run workflow
- ▼
-GitHub Actions
- │
- ├── Checkout repository
- ├── Install Python
- ├── Install dependencies
- ├── Load Google credentials
- │
- ▼
-Source Google Drive
- │
- └── products.csv
-       │
-       ▼
-    Pandas
-       │
-       ├── Product 101
-       ├── Product 102
-       └── Product 103
-       │
-       ▼
-Destination Google Drive
- │
- ├── 101.csv
- ├── 102.csv
- └── 103.csv
-```
-
----
-
-# 29. Git Workflow
-
-The project uses Git for version control.
-
-Typical workflow:
-
-```bash
-git status
-
-git add .
-
-git commit -m "Describe the change"
-
-git push
-```
-
-The repository is hosted on GitHub.
-
----
-
-# 30. Project Status
-
-### Current implementation
-
-| Component | Status |
-|---|---|
-| Python CSV processing | Implemented |
-| Google Drive API | Implemented |
-| Source account authentication | Implemented |
-| Destination account authentication | Implemented |
-| Create output CSV | Implemented |
-| Update existing CSV | Implemented |
-| Local execution | Implemented |
-| GitHub repository | Implemented |
-| GitHub Actions | Implemented |
-| Manual workflow trigger | Implemented |
-| Workflow folder inputs | Implemented |
-| GitHub Secrets | Implemented |
-| Scheduled execution | Future improvement |
-| Persistent cloud state | Future improvement |
-| Recursive folder processing | Future improvement |
-| Notifications | Future improvement |
-
----
-
-# 31. Summary
-
-This project converts a manual Google Drive CSV-processing task into a repeatable Python automation.
-
-The overall system is:
-
-```text
-Google Drive
-     ↓
-Google Drive API
-     ↓
-Python + Pandas
-     ↓
-Split CSV by Product ID
-     ↓
-Create / Update individual CSVs
-     ↓
-Destination Google Drive
-```
-
-GitHub Actions provides the execution environment:
-
-```text
-User
- ↓
-GitHub Actions
- ↓
-Python
- ↓
-Google Drive API
- ↓
-Destination Drive
-```
-
-The current workflow is manually triggered, allowing the user to select the source and destination folders for each execution. Future versions can add scheduled execution, persistent state, recursive processing, notifications, and improved monitoring.
-
----
-
-## License
-
-Add an appropriate license if this project is intended to be distributed publicly.
+Maintained by **Dhanush** ([GitHub @Dhanush104](https://github.com/Dhanush104)). Distributed under open guidelines.
