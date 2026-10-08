@@ -1,6 +1,4 @@
-from pathlib import Path
-
-readme = r'''# Google Drive CSV Automation
+# Google Drive CSV Automation
 
 Automate the processing of CSV files stored in Google Drive using the **Google Drive API**, **Python**, and **GitHub Actions**.
 
@@ -1041,9 +1039,3 @@ The current workflow is manually triggered, allowing the user to select the sour
 ## License
 
 Add an appropriate license if this project is intended to be distributed publicly.
-'''
-
-path = Path("/mnt/data/README.md")
-path.write_text(readme, encoding="utf-8")
-print(f"Created: {path}")
-print(f"Size: {path.stat().st_size} bytes")
